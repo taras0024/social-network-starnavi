@@ -1,0 +1,82 @@
+version: "3.5"
+services:
+  app:
+    image: sn-app:dev
+    build:
+      context: ../../
+      dockerfile: ./docker/django/Dockerfile
+    container_name: app
+    restart: always
+    command: >
+      bash -c "
+                ./docker/wait-for.sh db:5432 -- echo \"db run successfully\" &&
+                find . -name \*.pyc -delete &&
+                cd /SN && python manage.py collectstatic --noinput &&
+                gunicorn backend.wsgi:application -b :8080 -w 2 --reload -t 15 --env DJANGO_SETTINGS_MODULE='backend.settings'"
+    env_file:
+      - ../environment/app.local.env
+    volumes:
+      - ../../backend/:/SN/backend/
+    ports:
+      - "8080:8080"
+    depends_on:
+      - db
+    networks:
+      - default
+
+
+  migrations:
+    image: sn-app:dev
+    container_name: migrations
+    volumes:
+      - ../../backend/apps:/SN/backend/apps
+      - ../../backend/settings:/SN/backend/settings
+    command: >
+      bash -c "
+                ./docker/wait-for.sh db:5432 -- echo \"db run successfully\" &&
+                export PGPASSWORD=eUFkAPHVbXMr26kWp4Ws &&
+                psql -h db -p 5432 -U postgres -f ./docker/db/init.sql &&
+                python manage.py migrate && python manage.py create_superuser"
+    depends_on:
+      - db
+    env_file:
+      - ../environment/app.local.env
+    networks:
+      - default
+
+  db:
+    image: postgres:14
+    container_name: db
+    ports:
+      - "5432:5432"
+    env_file:
+      - ../environment/db.local.env
+    networks:
+      - default
+
+  notebook:
+    image: sn-notebook:dev
+    build:
+      context: ../../
+      dockerfile: ./docker/notebook/Dockerfile
+    container_name: notebook
+    depends_on:
+      - app
+      - db
+      - migrations
+    ports:
+      - "8899:8899"
+    environment:
+      JUPYTER_TOKEN: sn
+    env_file:
+      - ../environment/app.local.env
+      - ../environment/bot.local.env
+    volumes:
+      - ../../backend/:/SN/backend/
+    networks:
+      - default
+
+
+networks:
+  default:
+    driver: "bridge"
